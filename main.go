@@ -27,6 +27,9 @@ type connectionConfig struct {
 	RemoteCommand string
 	sshConfig *ssh.ClientConfig
 	Port string
+	Until string
+	Since string
+	Unit string
 }
 
 type connectionOutputs struct {
@@ -67,14 +70,29 @@ func main(){
 	}
 	output := connectToHosts(connConfig)
 	parsedOutputs := parseJournalCtlOutput(output, connConfig)
-	displayOutput(parsedOutputs)
 
+	if strings.ToUpper(connConfig.Function) == "JOURNALCTL"{
+		displayJournalOutput(parsedOutputs)
+	} else {
+		displayOutput(parsedOutputs)
+	}
+
+
+
+}
+
+func displayJournalOutput(output []journalCtlLog){
+	for _, result := range output {
+		if len(result.Message) > 1 {
+			fmt.Printf("%s\t%s\t%s\n", result.Host, time.Unix(int64(result.Timestamp/ 1000000),0 ), result.Message)
+		}
+	}
 }
 
 func displayOutput(output []journalCtlLog){
 	for _, result := range output {
 		if len(result.Message) > 1 {
-			fmt.Printf("%s\t%s\t%s\n", result.Host, time.Unix(int64(result.Timestamp/ 1000000),0 ), result.Message)
+			fmt.Printf("%s\t%s\n", result.Host, result.Message)
 		}
 	}
 }
@@ -159,13 +177,36 @@ func executeRemoteCommand (hostname string, cliArgs connectionConfig) (string, e
 func generateRemoteCommand (cliArgs connectionConfig) (cmd string) {
 	switch funct := strings.ToUpper(cliArgs.Function); funct {
 	case "JOURNALCTL":
-		cmd = fmt.Sprintf("sudo journalctl -n 50 -o json %s", strings.Join(cliArgs.Query, " | "))
+		cmd = strings.Join([]string{ generateJournalctlString(cliArgs),
+							strings.Join(cliArgs.Query, " | ")}, " ")
+
 	case "CAT":
 		cmd = fmt.Sprintf("cat %s %s", cliArgs.Query[0], strings.Join(cliArgs.Query[1:], " | "))
 	default:
 		cmd = fmt.Sprintf("%s %s", cliArgs.Function, strings.Join(cliArgs.Query, " | "))
 	}
 	return cmd
+}
+
+func generateJournalctlString (cliArgs connectionConfig) (cmd string){
+	cmd_string := "sudo journalctl -o json"
+
+	if cliArgs.Unit != "" {
+		cmd_string = strings.Join([]string{cmd_string, fmt.Sprintf("-u %s", cliArgs.Unit)},
+			" ")
+	}
+
+	if cliArgs.Since != "" {
+		cmd_string = strings.Join([]string{cmd_string, fmt.Sprintf("--since \"%s\"", cliArgs.Since)},
+		" ")
+	}
+
+	if cliArgs.Until != "" {
+		cmd_string = strings.Join([]string{cmd_string, fmt.Sprintf("--until \"%s\"", cliArgs.Until)},
+			" ")
+	}
+
+	return cmd_string
 }
 
 func startSession (client *ssh.Client) (*ssh.Session, error) {
@@ -223,6 +264,8 @@ func verifyArgs(cliArgs connectionConfig)(connectionConfig, error) {
 			cliArgs.KeyFile = fmt.Sprintf("%s/.ssh/id_rsa", usr.HomeDir)
 		}
 
+
+
 		return cliArgs, nil
 	} else {
 		err := errors.New("could not parse CLI arguments")
@@ -237,7 +280,10 @@ func getCliFlags() (connectionConfig){
 	hostList := flag.String("h", "", "File or string of hosts, comma separated.")
 	function := flag.String("f", "", "Name of File or Function (journalctl)")
 	query := flag.String("q", "", "Regex Query String(s), comma separated.")
+	since := flag.String("since", "", "Journalctl Since string (5 min ago)")
+	until := flag.String("until", "", "Journalctl Until string (5 min ago)")
 	port := flag.String("port", "22", "SSH Port.")
+	unit := flag.String("unit", "", "SystemD unit")
 
 	flag.Parse()
 
@@ -249,6 +295,9 @@ func getCliFlags() (connectionConfig){
 		Function: *function,
 		Query: ParseCSV(*query),
 		Port: *port,
+		Until: *until,
+		Since: *since,
+		Unit: *unit,
 	}
 }
 
